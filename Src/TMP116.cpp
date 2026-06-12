@@ -28,17 +28,12 @@ using Config		= TMP116::Config;
 
 TMP116::TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress) : i2c{i2c}, deviceAddress{deviceAddress} {}
 
-void TMP116::setAlertCallback(AlertHandler handler, void *ctx) {
-	this->alertHandler = handler;
-	this->alertCtx	   = ctx;
-}
-
 void TMP116::checkAlert() {
-	if (!this->alertHandler) return;
+	if (!this->m_invoke) return;
 	auto config = this->getConfig();
 	if (!config) return;
-	if (config->highAlertFlag) this->alertHandler(this->alertCtx, AlertType::High);
-	if (config->lowAlertFlag) this->alertHandler(this->alertCtx, AlertType::Low);
+	if (config->highAlertFlag) this->m_invoke(this->m_callable, AlertType::High);
+	if (config->lowAlertFlag) this->m_invoke(this->m_callable, AlertType::Low);
 }
 
 /**

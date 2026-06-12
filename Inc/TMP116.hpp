@@ -8,14 +8,13 @@
 
 #pragma once
 
+#include <concepts>
 #include <cstdint>
 #include <optional>
 
 class TMP116 {
 public:
 	enum class AlertType : uint8_t { Low, High };
-
-	using AlertHandler = void (*)(void *ctx, AlertType type);
 
 	/**
 	 * @brief I2C Interface
@@ -63,8 +62,8 @@ public:
 private:
 	I2C			 &i2c;
 	DeviceAddress deviceAddress;
-	AlertHandler  alertHandler = nullptr;
-	void		 *alertCtx	   = nullptr;
+	void (*m_invoke)(void *, AlertType) = nullptr;
+	void *m_callable				   = nullptr;
 
 public:
 	/**
@@ -78,10 +77,24 @@ public:
 	/**
 	 * @brief Register a callback invoked by checkAlert() when an alert flag is set.
 	 *
-	 * @param handler Function pointer called with ctx and the alert type. Pass nullptr to clear.
-	 * @param ctx     Opaque pointer forwarded to handler on each invocation.
+	 * @tparam F Any callable satisfying std::invocable<AlertType> (lambda, functor, or function pointer).
+	 * @param callback Lvalue reference to the callable. The driver holds a non-owning pointer;
+	 *                 the callable must remain valid for the lifetime of this TMP116 instance.
+	 * @note No heap allocation is performed. std::function is not used.
 	 */
-	void setAlertCallback(AlertHandler handler, void *ctx = nullptr);
+	template<std::invocable<AlertType> F>
+	void setAlertCallback(F &callback) noexcept {
+		m_callable = static_cast<void *>(&callback);
+		m_invoke   = [](void *p, AlertType t) { (*static_cast<F *>(p))(t); };
+	}
+
+	/**
+	 * @brief Clear the registered alert callback.
+	 */
+	void setAlertCallback(std::nullptr_t) noexcept {
+		m_invoke   = nullptr;
+		m_callable = nullptr;
+	}
 
 	/**
 	 * @brief Read the config register and dispatch the alert callback for any active flag.

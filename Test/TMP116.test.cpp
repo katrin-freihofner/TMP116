@@ -271,19 +271,34 @@ TEST_F(TMP116_Test, setLowLimitReturnsFalseWhenI2CWriteFails) {
 }
 
 // --------------------------------------------------------------------------
-// Alert callback tests
+// Compile-time concept satisfaction checks
 // --------------------------------------------------------------------------
 
-static void recordAlert(void *ctx, TMP116::AlertType type) {
-	*static_cast<TMP116::AlertType *>(ctx) = type;
-}
+// Types that satisfy std::invocable<AlertType> — these must compile.
+static_assert(std::invocable<void (*)(TMP116::AlertType), TMP116::AlertType>, "Function pointer must satisfy std::invocable<AlertType>");
+
+struct ValidFunctor {
+	void operator()(TMP116::AlertType) {}
+};
+static_assert(std::invocable<ValidFunctor, TMP116::AlertType>, "Functor must satisfy std::invocable<AlertType>");
+
+// A type that does NOT satisfy the concept — verified at compile time.
+struct NonCallable {};
+static_assert(!std::invocable<NonCallable, TMP116::AlertType>, "NonCallable must not satisfy std::invocable<AlertType>");
+// The following line, if uncommented, must fail to compile (concept constraint not satisfied):
+// NonCallable nc; this->tmp116.setAlertCallback(nc);
+
+// --------------------------------------------------------------------------
+// Alert callback tests
+// --------------------------------------------------------------------------
 
 TEST_F(TMP116_Test, checkAlertDispatchesHighCallbackWhenHighFlagSet) {
 	// Config register with highAlertFlag bit (bit 15) set
 	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x8220u}));
 
 	TMP116::AlertType received = TMP116::AlertType::Low;
-	this->tmp116.setAlertCallback(recordAlert, &received);
+	auto			  cb	   = [&received](TMP116::AlertType type) { received = type; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
 
 	EXPECT_EQ(received, TMP116::AlertType::High);
@@ -294,7 +309,8 @@ TEST_F(TMP116_Test, checkAlertDispatchesLowCallbackWhenLowFlagSet) {
 	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x4220u}));
 
 	TMP116::AlertType received = TMP116::AlertType::High;
-	this->tmp116.setAlertCallback(recordAlert, &received);
+	auto			  cb	   = [&received](TMP116::AlertType type) { received = type; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
 
 	EXPECT_EQ(received, TMP116::AlertType::Low);
@@ -304,9 +320,9 @@ TEST_F(TMP116_Test, checkAlertDispatchesBothCallbacksWhenBothFlagsSet) {
 	// Config register with both highAlertFlag (bit 15) and lowAlertFlag (bit 14) set
 	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0xC220u}));
 
-	int callCount = 0;
-	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
-	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	int  callCount = 0;
+	auto cb		   = [&callCount](TMP116::AlertType) { callCount++; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
 
 	EXPECT_EQ(callCount, 2);
@@ -315,16 +331,16 @@ TEST_F(TMP116_Test, checkAlertDispatchesBothCallbacksWhenBothFlagsSet) {
 TEST_F(TMP116_Test, checkAlertDoesNotDispatchWhenNoFlagsSet) {
 	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x0220u}));
 
-	int callCount = 0;
-	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
-	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	int  callCount = 0;
+	auto cb		   = [&callCount](TMP116::AlertType) { callCount++; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
 
 	EXPECT_EQ(callCount, 0);
 }
 
 TEST_F(TMP116_Test, checkAlertDoesNothingWhenNoCallbackRegistered) {
-	// No I2C call expected when handler is null
+	// No I2C call expected when no callback is set
 	EXPECT_CALL(mockedI2C, read).Times(0);
 	this->tmp116.checkAlert();
 }
@@ -332,30 +348,42 @@ TEST_F(TMP116_Test, checkAlertDoesNothingWhenNoCallbackRegistered) {
 TEST_F(TMP116_Test, checkAlertDoesNothingWhenI2CFails) {
 	this->disableI2C();
 
-	int callCount = 0;
-	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
-	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	int  callCount = 0;
+	auto cb		   = [&callCount](TMP116::AlertType) { callCount++; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
 
 	EXPECT_EQ(callCount, 0);
 }
 
-TEST_F(TMP116_Test, checkAlertForwardsContextPointer) {
+TEST_F(TMP116_Test, checkAlertCallbackReceivesCorrectAlertType) {
+	// Verify the AlertType enum value is forwarded correctly to the callback
 	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x8220u}));
 
-	void *capturedCtx = nullptr;
-	auto captureCtx	  = [](void *ctx, TMP116::AlertType) { *static_cast<void **>(ctx) = ctx; };
-
-	int sentinel = 42;
-	this->tmp116.setAlertCallback(captureCtx, &sentinel);
+	TMP116::AlertType received = TMP116::AlertType::Low;
+	auto			  cb	   = [&received](TMP116::AlertType t) { received = t; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.checkAlert();
+
+	EXPECT_EQ(received, TMP116::AlertType::High);
+}
+
+TEST_F(TMP116_Test, setAlertCallbackAcceptsFunctorType) {
+	// Demonstrates that a functor (not just a lambda) satisfies the concept constraint
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x8220u}));
+
+	int			  callCount = 0;
+	ValidFunctor  f{};
+	this->tmp116.setAlertCallback(f);
+	this->tmp116.checkAlert();
+	// ValidFunctor::operator() is a no-op; just confirm it compiles and does not crash
 }
 
 TEST_F(TMP116_Test, setAlertCallbackClearsCallbackWhenPassedNullptr) {
 	// Set a handler, then clear it — checkAlert must not read I2C
-	int callCount = 0;
-	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
-	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	int  callCount = 0;
+	auto cb		   = [&callCount](TMP116::AlertType) { callCount++; };
+	this->tmp116.setAlertCallback(cb);
 	this->tmp116.setAlertCallback(nullptr);
 
 	EXPECT_CALL(mockedI2C, read).Times(0);
