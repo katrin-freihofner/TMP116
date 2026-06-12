@@ -28,6 +28,19 @@ using Config		= TMP116::Config;
 
 TMP116::TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress) : i2c{i2c}, deviceAddress{deviceAddress} {}
 
+void TMP116::setAlertCallback(AlertHandler handler, void *ctx) {
+	this->alertHandler = handler;
+	this->alertCtx	   = ctx;
+}
+
+void TMP116::checkAlert() {
+	if (!this->alertHandler) return;
+	auto config = this->getConfig();
+	if (!config) return;
+	if (config->highAlertFlag) this->alertHandler(this->alertCtx, AlertType::High);
+	if (config->lowAlertFlag) this->alertHandler(this->alertCtx, AlertType::Low);
+}
+
 /**
  * @brief Convert a TMP116 Register temperature value to a float.
  *
@@ -139,14 +152,14 @@ std::optional<Register> TMP116::setConfig(
 	}
 }
 
-std::optional<Register> TMP116::setHighLimit(float temperature) const {
+bool TMP116::setHighLimit(float temperature) const {
 	Register registerValue = convertTemperatureRegister(temperature);
-	return this->i2c.write(this->deviceAddress, TMP116_HIGH_LIM_REG_ADDR, registerValue);
+	return this->i2c.write(this->deviceAddress, TMP116_HIGH_LIM_REG_ADDR, registerValue).has_value();
 }
 
-std::optional<Register> TMP116::setLowLimit(float temperature) const {
+bool TMP116::setLowLimit(float temperature) const {
 	Register registerValue = convertTemperatureRegister(temperature);
-	return this->i2c.write(this->deviceAddress, TMP116_LOW_LIM_REG_ADDR, registerValue);
+	return this->i2c.write(this->deviceAddress, TMP116_LOW_LIM_REG_ADDR, registerValue).has_value();
 }
 
 TMP116::Config::Config(Register configRegister)

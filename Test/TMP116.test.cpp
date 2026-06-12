@@ -240,34 +240,125 @@ TEST_F(TMP116_Test, setConfigReturnsNulloptWhenI2CFails) {
 	EXPECT_EQ(this->tmp116.setConfig(Config{}), nullopt);
 }
 
-TEST_F(TMP116_Test, setHighLimitNormallyReturnsRegisterValue) {
+TEST_F(TMP116_Test, setHighLimitReturnsTrueOnSuccess) {
 	const MemoryAddress highLimitAddress			  = 0x02u;
-	float				setHighLimitValue			  = -10.0f;
 	const Register		highLimitExpectedWrittenValue = 0xFB00u;
 
-	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(highLimitAddress), _)).WillOnce(ReturnArg<2>());
+	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(highLimitAddress), Eq(highLimitExpectedWrittenValue)))
+		.WillOnce(ReturnArg<2>());
 
-	const auto highLimitResult = this->tmp116.setHighLimit(setHighLimitValue);
-	EXPECT_EQ(highLimitResult.value(), highLimitExpectedWrittenValue);
+	EXPECT_TRUE(this->tmp116.setHighLimit(-10.0f));
 }
 
-TEST_F(TMP116_Test, setHighLimitReturnsNulloptWhenI2CWriteFails) {
+TEST_F(TMP116_Test, setHighLimitReturnsFalseWhenI2CWriteFails) {
 	this->disableI2C();
-	EXPECT_EQ(this->tmp116.setHighLimit(0.0f), nullopt);
+	EXPECT_FALSE(this->tmp116.setHighLimit(0.0f));
 }
 
-TEST_F(TMP116_Test, setLowLimitNormallyReturnsRegisterValue) {
+TEST_F(TMP116_Test, setLowLimitReturnsTrueOnSuccess) {
 	const MemoryAddress lowLimitAddress				 = 0x03u;
-	float				setLowLimitValue			 = -10.0f;
 	const Register		lowLimitExpectedWrittenValue = 0xFB00u;
 
-	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(lowLimitAddress), _)).WillOnce(ReturnArg<2>());
+	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(lowLimitAddress), Eq(lowLimitExpectedWrittenValue)))
+		.WillOnce(ReturnArg<2>());
 
-	const auto lowLimitResult = this->tmp116.setLowLimit(setLowLimitValue);
-	EXPECT_EQ(lowLimitResult.value(), lowLimitExpectedWrittenValue);
+	EXPECT_TRUE(this->tmp116.setLowLimit(-10.0f));
 }
 
-TEST_F(TMP116_Test, setLowLimitReturnsNulloptWhenI2CWriteFails) {
+TEST_F(TMP116_Test, setLowLimitReturnsFalseWhenI2CWriteFails) {
 	this->disableI2C();
-	EXPECT_EQ(this->tmp116.setLowLimit(0.0f), nullopt);
+	EXPECT_FALSE(this->tmp116.setLowLimit(0.0f));
+}
+
+// --------------------------------------------------------------------------
+// Alert callback tests
+// --------------------------------------------------------------------------
+
+static void recordAlert(void *ctx, TMP116::AlertType type) {
+	*static_cast<TMP116::AlertType *>(ctx) = type;
+}
+
+TEST_F(TMP116_Test, checkAlertDispatchesHighCallbackWhenHighFlagSet) {
+	// Config register with highAlertFlag bit (bit 15) set
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x8220u}));
+
+	TMP116::AlertType received = TMP116::AlertType::Low;
+	this->tmp116.setAlertCallback(recordAlert, &received);
+	this->tmp116.checkAlert();
+
+	EXPECT_EQ(received, TMP116::AlertType::High);
+}
+
+TEST_F(TMP116_Test, checkAlertDispatchesLowCallbackWhenLowFlagSet) {
+	// Config register with lowAlertFlag bit (bit 14) set
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x4220u}));
+
+	TMP116::AlertType received = TMP116::AlertType::High;
+	this->tmp116.setAlertCallback(recordAlert, &received);
+	this->tmp116.checkAlert();
+
+	EXPECT_EQ(received, TMP116::AlertType::Low);
+}
+
+TEST_F(TMP116_Test, checkAlertDispatchesBothCallbacksWhenBothFlagsSet) {
+	// Config register with both highAlertFlag (bit 15) and lowAlertFlag (bit 14) set
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0xC220u}));
+
+	int callCount = 0;
+	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
+	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	this->tmp116.checkAlert();
+
+	EXPECT_EQ(callCount, 2);
+}
+
+TEST_F(TMP116_Test, checkAlertDoesNotDispatchWhenNoFlagsSet) {
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x0220u}));
+
+	int callCount = 0;
+	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
+	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	this->tmp116.checkAlert();
+
+	EXPECT_EQ(callCount, 0);
+}
+
+TEST_F(TMP116_Test, checkAlertDoesNothingWhenNoCallbackRegistered) {
+	// No I2C call expected when handler is null
+	EXPECT_CALL(mockedI2C, read).Times(0);
+	this->tmp116.checkAlert();
+}
+
+TEST_F(TMP116_Test, checkAlertDoesNothingWhenI2CFails) {
+	this->disableI2C();
+
+	int callCount = 0;
+	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
+	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	this->tmp116.checkAlert();
+
+	EXPECT_EQ(callCount, 0);
+}
+
+TEST_F(TMP116_Test, checkAlertForwardsContextPointer) {
+	EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(MemoryAddress{0x01u}))).WillOnce(Return(Register{0x8220u}));
+
+	void *capturedCtx = nullptr;
+	auto captureCtx	  = [](void *ctx, TMP116::AlertType) { *static_cast<void **>(ctx) = ctx; };
+
+	int sentinel = 42;
+	this->tmp116.setAlertCallback(captureCtx, &sentinel);
+	this->tmp116.checkAlert();
+}
+
+TEST_F(TMP116_Test, setAlertCallbackClearsCallbackWhenPassedNullptr) {
+	// Set a handler, then clear it — checkAlert must not read I2C
+	int callCount = 0;
+	auto countingHandler = [](void *ctx, TMP116::AlertType) { (*static_cast<int *>(ctx))++; };
+	this->tmp116.setAlertCallback(countingHandler, &callCount);
+	this->tmp116.setAlertCallback(nullptr);
+
+	EXPECT_CALL(mockedI2C, read).Times(0);
+	this->tmp116.checkAlert();
+	EXPECT_EQ(callCount, 0);
 }

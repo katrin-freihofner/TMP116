@@ -13,6 +13,10 @@
 
 class TMP116 {
 public:
+	enum class AlertType : uint8_t { Low, High };
+
+	using AlertHandler = void (*)(void *ctx, AlertType type);
+
 	/**
 	 * @brief I2C Interface
 	 *
@@ -59,6 +63,8 @@ public:
 private:
 	I2C			 &i2c;
 	DeviceAddress deviceAddress;
+	AlertHandler  alertHandler = nullptr;
+	void		 *alertCtx	   = nullptr;
 
 public:
 	/**
@@ -68,6 +74,21 @@ public:
 	 * @param deviceAddress Device Address of the TMP116 on the I2C Bus to address.
 	 */
 	TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress);
+
+	/**
+	 * @brief Register a callback invoked by checkAlert() when an alert flag is set.
+	 *
+	 * @param handler Function pointer called with ctx and the alert type. Pass nullptr to clear.
+	 * @param ctx     Opaque pointer forwarded to handler on each invocation.
+	 */
+	void setAlertCallback(AlertHandler handler, void *ctx = nullptr);
+
+	/**
+	 * @brief Read the config register and dispatch the alert callback for any active flag.
+	 *
+	 * @note Call from the MCU interrupt handler or polling loop after the ALERT pin fires.
+	 */
+	void checkAlert();
 
 	/**
 	 * @brief Get the Temperature from the TMP116.
@@ -211,17 +232,19 @@ public:
 	 * @brief Set the High Limit threshold for the TMP116.
 	 *
 	 * @param temperature The temperature limit in degrees Celsius.
-	 * @return std::optional<Register> The register value written to the TMP116 high limit register if successful.
+	 * @return true if the I²C write succeeded.
 	 */
-	std::optional<Register> setHighLimit(float temperature) const;
+	[[nodiscard("check return to confirm limit write succeeded")]]
+	bool setHighLimit(float temperature) const;
 
 	/**
 	 * @brief Set the Low Limit threshold for the TMP116.
 	 *
 	 * @param temperature The temperature limit in degrees Celsius.
-	 * @return std::optional<Register> The register value written to the TMP116 low limit register if successful.
+	 * @return true if the I²C write succeeded.
 	 */
-	std::optional<Register> setLowLimit(float temperature) const;
+	[[nodiscard("check return to confirm limit write succeeded")]]
+	bool setLowLimit(float temperature) const;
 
 public:
 	inline DeviceAddress getDeviceAddress() const { return deviceAddress; }
