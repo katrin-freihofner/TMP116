@@ -69,6 +69,54 @@ public:
 
 Refer to [Examples] for concrete examples of this design pattern.
 
+## Temperature Alerts
+
+The TMP116 can assert its ALERT pin when the measured temperature crosses the high or low limit
+registers, which avoids polling the I2C bus at a fixed rate and catches fast thermal events between
+reads.
+
+Set the limits, then register a callback:
+
+```cpp
+sensor.setConfig(TMP116::Config::ThermalAlertModeSelect::ALERT);
+sensor.setHighLimit(250.0f); // degrees Celsius
+sensor.setLowLimit(0.0f);
+
+sensor.setAlertCallback([](TMP116::AlertType alertType) {
+    if (alertType == TMP116::AlertType::High) shutdownHeatingElement();
+});
+```
+
+The callback is a plain function pointer rather than a `std::function`, so that registration cannot
+heap allocate on a bare-metal target. A captureless lambda converts to it implicitly, as above. To
+pass state without a global, use the context overload, whose `void *` is forwarded back unchanged
+and is never dereferenced by the driver:
+
+```cpp
+sensor.setAlertCallback(
+    [](TMP116::AlertType alertType, void *context) { static_cast<Oven *>(context)->onAlert(alertType); },
+    &oven
+);
+```
+
+The context is owned by the caller. Call `clearAlertCallback()` before destroying it.
+
+### Servicing the alert
+
+The driver is platform agnostic and contains no GPIO handling, so it cannot observe the ALERT pin
+itself. The application services the pin and calls `serviceAlert()`, which reads the alert flags and
+dispatches the callback:
+
+```cpp
+void onAlertPinInterrupt(void) {
+    sensor.serviceAlert(); // Consider deferring to a task if your I2C driver blocks.
+}
+```
+
+If both flags are set, the callback is invoked twice, once per `AlertType`. In `ALERT` mode reading
+the configuration register clears the flags, so a given crossing is reported once. `serviceAlert()`
+returns the `Config` it read, or `std::nullopt` if the I2C read failed.
+
 ## Testing
 
 This driver is unit tested using the GoogleTest and GoogleMock frameworks. The tests are located in the [Tests](Tests) directory.

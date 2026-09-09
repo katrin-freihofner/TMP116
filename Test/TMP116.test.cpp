@@ -24,6 +24,7 @@ using std::nullopt;
 using DeviceAddress = TMP116::I2C::DeviceAddress;
 using MemoryAddress = TMP116::I2C::MemoryAddress;
 using Register		= TMP116::I2C::Register;
+using AlertType		= TMP116::AlertType;
 
 // Tests of Static Functions
 
@@ -270,4 +271,151 @@ TEST_F(TMP116_Test, setLowLimitNormallyReturnsRegisterValue) {
 TEST_F(TMP116_Test, setLowLimitReturnsNulloptWhenI2CWriteFails) {
 	this->disableI2C();
 	EXPECT_EQ(this->tmp116.setLowLimit(0.0f), nullopt);
+}
+
+// Alert Callback Tests
+//
+// The alert callbacks are plain function pointers so that registration cannot allocate, which means
+// a test callback cannot capture its fixture. Dispatches are therefore recorded in this file-scope
+// log, which alertLog resets before each case.
+
+static constexpr size_t alertLogCapacity = 4u;
+
+static struct AlertLog {
+	size_t	  count					   = 0u;
+	AlertType alertTypes[alertLogCapacity] = {};
+	void	 *contexts[alertLogCapacity]   = {};
+
+	void reset() { *this = AlertLog{}; }
+
+	void record(AlertType alertType, void *context) {
+		if (this->count >= alertLogCapacity) return; // Never overrun; an overrun fails the count check.
+		this->alertTypes[this->count] = alertType;
+		this->contexts[this->count]	  = context;
+		++this->count;
+	}
+} alertLog;
+
+static void recordAlert(AlertType alertType) { alertLog.record(alertType, nullptr); }
+
+static void recordAlertWithContext(AlertType alertType, void *context) { alertLog.record(alertType, context); }
+
+class TMP116_AlertTest : public TMP116_Test {
+public:
+	// Configuration register values differing only in the high (0x8000) and low (0x4000) alert flags.
+	static constexpr Register configNoAlert	  = 0x0220u;
+	static constexpr Register configHighAlert = 0x8220u;
+	static constexpr Register configLowAlert  = 0x4220u;
+	static constexpr Register configBothAlert = 0xC220u;
+
+	void SetUp() override { alertLog.reset(); }
+
+	inline void expectConfigRead(Register configRegister) {
+		const MemoryAddress configAddress = 0x01u;
+		EXPECT_CALL(mockedI2C, read(Eq(this->deviceAddress), Eq(configAddress))).WillOnce(Return(configRegister));
+	}
+};
+
+TEST_F(TMP116_AlertTest, serviceAlertDispatchesHighAlert) {
+	this->expectConfigRead(configHighAlert);
+	this->tmp116.setAlertCallback(recordAlert);
+
+	const auto config = this->tmp116.serviceAlert();
+
+	EXPECT_TRUE(config.has_value());
+	ASSERT_EQ(alertLog.count, 1u);
+	EXPECT_EQ(alertLog.alertTypes[0], AlertType::High);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertDispatchesLowAlert) {
+	this->expectConfigRead(configLowAlert);
+	this->tmp116.setAlertCallback(recordAlert);
+
+	const auto config = this->tmp116.serviceAlert();
+
+	EXPECT_TRUE(config.has_value());
+	ASSERT_EQ(alertLog.count, 1u);
+	EXPECT_EQ(alertLog.alertTypes[0], AlertType::Low);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertDispatchesBothAlertsWhenBothFlagsAreSet) {
+	this->expectConfigRead(configBothAlert);
+	this->tmp116.setAlertCallback(recordAlert);
+
+	this->tmp116.serviceAlert();
+
+	ASSERT_EQ(alertLog.count, 2u);
+	EXPECT_EQ(alertLog.alertTypes[0], AlertType::High);
+	EXPECT_EQ(alertLog.alertTypes[1], AlertType::Low);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertDoesNotDispatchWhenNoAlertFlagIsSet) {
+	this->expectConfigRead(configNoAlert);
+	this->tmp116.setAlertCallback(recordAlert);
+
+	const auto config = this->tmp116.serviceAlert();
+
+	EXPECT_TRUE(config.has_value());
+	EXPECT_EQ(alertLog.count, 0u);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertDoesNotDispatchWhenNoCallbackIsRegistered) {
+	this->expectConfigRead(configBothAlert);
+
+	const auto config = this->tmp116.serviceAlert(); // Must not dereference a null callback.
+
+	EXPECT_TRUE(config.has_value());
+	EXPECT_EQ(alertLog.count, 0u);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertDoesNotDispatchAfterClearAlertCallback) {
+	this->expectConfigRead(configHighAlert);
+	this->tmp116.setAlertCallback(recordAlert);
+	this->tmp116.clearAlertCallback();
+
+	this->tmp116.serviceAlert();
+
+	EXPECT_EQ(alertLog.count, 0u);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertForwardsTheContextPointerUnchanged) {
+	int	 contextObject = 0;
+	this->expectConfigRead(configHighAlert);
+	this->tmp116.setAlertCallback(recordAlertWithContext, &contextObject);
+
+	this->tmp116.serviceAlert();
+
+	ASSERT_EQ(alertLog.count, 1u);
+	EXPECT_EQ(alertLog.alertTypes[0], AlertType::High);
+	EXPECT_EQ(alertLog.contexts[0], &contextObject);
+}
+
+TEST_F(TMP116_AlertTest, setAlertCallbackDisarmsThePreviouslyRegisteredOverload) {
+	int	 contextObject = 0;
+	this->expectConfigRead(configHighAlert);
+	this->tmp116.setAlertCallback(recordAlertWithContext, &contextObject);
+	this->tmp116.setAlertCallback(recordAlert); // Must drop the context callback, and its context.
+
+	this->tmp116.serviceAlert();
+
+	ASSERT_EQ(alertLog.count, 1u);
+	EXPECT_EQ(alertLog.contexts[0], nullptr);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertAcceptsACapturelessLambda) {
+	this->expectConfigRead(configHighAlert);
+	this->tmp116.setAlertCallback([](AlertType alertType) { alertLog.record(alertType, nullptr); });
+
+	this->tmp116.serviceAlert();
+
+	ASSERT_EQ(alertLog.count, 1u);
+	EXPECT_EQ(alertLog.alertTypes[0], AlertType::High);
+}
+
+TEST_F(TMP116_AlertTest, serviceAlertReturnsNulloptAndDoesNotDispatchWhenI2CReadFails) {
+	this->disableI2C();
+	this->tmp116.setAlertCallback(recordAlert);
+
+	EXPECT_EQ(this->tmp116.serviceAlert(), nullopt);
+	EXPECT_EQ(alertLog.count, 0u);
 }

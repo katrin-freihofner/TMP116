@@ -149,6 +149,45 @@ std::optional<Register> TMP116::setLowLimit(float temperature) const {
 	return this->i2c.write(this->deviceAddress, TMP116_LOW_LIM_REG_ADDR, registerValue);
 }
 
+void TMP116::setAlertCallback(AlertCallback callback) {
+	// The two callback forms are mutually exclusive, so arming one disarms the other.
+	this->alertCallback			   = callback;
+	this->alertCallbackWithContext = nullptr;
+	this->alertCallbackContext	   = nullptr;
+}
+
+void TMP116::setAlertCallback(AlertCallbackWithContext callback, void *context) {
+	this->alertCallbackWithContext = callback;
+	this->alertCallbackContext	   = context;
+	this->alertCallback			   = nullptr;
+}
+
+void TMP116::clearAlertCallback() {
+	this->alertCallback			   = nullptr;
+	this->alertCallbackWithContext = nullptr;
+	this->alertCallbackContext	   = nullptr;
+}
+
+void TMP116::dispatchAlert(AlertType alertType) const {
+	if (this->alertCallback != nullptr) this->alertCallback(alertType);
+	else if (this->alertCallbackWithContext != nullptr)
+		this->alertCallbackWithContext(alertType, this->alertCallbackContext);
+}
+
+std::optional<Config> TMP116::serviceAlert() {
+	// Reading the config register both reports and, in ALERT mode, clears the alert flags.
+	const auto transmission = this->getConfig();
+
+	if (!transmission) return std::nullopt;
+
+	const Config config = transmission.value();
+
+	if (config.highAlertFlag) this->dispatchAlert(AlertType::High);
+	if (config.lowAlertFlag) this->dispatchAlert(AlertType::Low);
+
+	return config;
+}
+
 TMP116::Config::Config(Register configRegister)
 	: highAlertFlag(static_cast<bool>(configRegister & 0x8000u)),
 	  lowAlertFlag(static_cast<bool>(configRegister & 0x4000u)),
