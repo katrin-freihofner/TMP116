@@ -56,9 +56,42 @@ public:
 	using MemoryAddress = I2C::MemoryAddress;
 	using Register		= I2C::Register;
 
+	/**
+	 * @brief The limit that was crossed when the TMP116 asserted its ALERT pin.
+	 */
+	enum class AlertType : uint8_t {
+		High, // Measured temperature rose above the High Limit register.
+		Low,  // Measured temperature fell below the Low Limit register.
+	};
+
+	/**
+	 * @brief Alert callback taking only the alert type.
+	 * @note A plain function pointer, not a std::function, so that registration cannot allocate.
+	 *       A captureless lambda converts to this type implicitly.
+	 */
+	typedef void (*AlertCallback)(AlertType alertType);
+
+	/**
+	 * @brief Alert callback taking the alert type and a caller-owned context pointer.
+	 * @note The context is opaque to the driver, which never dereferences it. @see setAlertCallback.
+	 */
+	typedef void (*AlertCallbackWithContext)(AlertType alertType, void *context);
+
 private:
 	I2C			 &i2c;
 	DeviceAddress deviceAddress;
+
+	// At most one of these two callbacks is armed at any time. @see setAlertCallback.
+	AlertCallback			alertCallback			 = nullptr;
+	AlertCallbackWithContext alertCallbackWithContext = nullptr;
+	void					*alertCallbackContext	 = nullptr;
+
+	/**
+	 * @brief Invoke whichever alert callback is armed, if any.
+	 *
+	 * @param alertType The limit that was crossed.
+	 */
+	void dispatchAlert(AlertType alertType) const;
 
 public:
 	/**
@@ -222,6 +255,46 @@ public:
 	 * @return std::optional<Register> The register value written to the TMP116 low limit register if successful.
 	 */
 	std::optional<Register> setLowLimit(float temperature) const;
+
+	/**
+	 * @brief Register a callback to be invoked when the TMP116 reports a limit crossing.
+	 *
+	 * @param callback The function to invoke, or nullptr to disarm. @see clearAlertCallback.
+	 * @note Replaces any previously registered callback of either form.
+	 * @note The callback is invoked from TMP116::serviceAlert, which the application calls itself.
+	 *       The driver never installs an interrupt handler. @see serviceAlert.
+	 */
+	void setAlertCallback(AlertCallback callback);
+
+	/**
+	 * @brief Register a callback that additionally receives a caller-owned context pointer.
+	 *
+	 * @param callback The function to invoke, or nullptr to disarm.
+	 * @param context Passed back to the callback unchanged. The driver never dereferences it.
+	 * @note Replaces any previously registered callback of either form.
+	 * @warning The context is owned by the caller. Call clearAlertCallback before destroying it.
+	 */
+	void setAlertCallback(AlertCallbackWithContext callback, void *context);
+
+	/**
+	 * @brief Unregister any alert callback, and forget the associated context pointer.
+	 * @note Safe to call when no callback is registered.
+	 */
+	void clearAlertCallback();
+
+	/**
+	 * @brief Read the alert flags from the TMP116 and dispatch the registered callback.
+	 *
+	 * @return std::optional<Config> The configuration read, or std::nullopt if the I2C read failed.
+	 * @note The application is expected to call this in response to the TMP116 ALERT pin, from its
+	 *       own interrupt handler or task. The driver is deliberately platform agnostic and contains
+	 *       no GPIO handling, so that the ALERT pin can be serviced however the target requires.
+	 * @note If both the high and low flags are set, the callback is invoked twice: once with
+	 *       AlertType::High and once with AlertType::Low.
+	 * @note In ALERT mode reading the configuration register clears the flags, so a given crossing
+	 *       is reported once. @see Config::ThermalAlertModeSelect.
+	 */
+	std::optional<Config> serviceAlert();
 
 public:
 	inline DeviceAddress getDeviceAddress() const { return deviceAddress; }
