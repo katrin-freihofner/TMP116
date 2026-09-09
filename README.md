@@ -69,6 +69,45 @@ public:
 
 Refer to [Examples] for concrete examples of this design pattern.
 
+## Temperatures
+
+Temperatures are physical quantities, not bare `float`s. The limit setters take any point on the
+temperature scale, and `getTemperature` returns one, so a value cannot be silently misread as the
+wrong unit on its way between the driver, a controller and a display:
+
+```cpp
+using namespace mp_units;
+
+// The same threshold, in whichever unit is natural at the call site. No manual conversion, and
+// both write the same register value. The setters are [[nodiscard]]: the returned optional is
+// empty if the I2C write failed.
+const auto written = sensor.setHighLimit(point<si::degree_Celsius>(30.0f));
+if (!written) reportBusFailure();
+
+(void)sensor.setHighLimit(point<usc::degree_Fahrenheit>(86.0f)); // same register value
+
+// The reading carries its unit, and is converted explicitly where it is needed.
+TMP116::Temperature temperature = sensor.getTemperature();
+auto fahrenheit = temperature.in(usc::degree_Fahrenheit);
+```
+
+These are rejected at compile time rather than at runtime:
+
+```cpp
+sensor.setHighLimit(30.0f);                              // a bare float carries no unit
+sensor.setHighLimit(point<si::metre>(1.0f));             // not a temperature
+sensor.setHighLimit(delta<si::degree_Celsius>(30.0f));   // a difference, not a point on the scale
+float t = sensor.getTemperature();                       // the unit cannot be discarded by accident
+```
+
+That last distinction is the reason the API uses `quantity_point` rather than `quantity`: for a
+scale with an offset zero, a *point* of 86 degF is 30 degC, whereas a *difference* of 86 degF is
+47.8 degC. Conflating the two is exactly the class of bug this API removes.
+
+Units come from [mp-units], the reference implementation of [P1935]. The library is header only and
+compiles to the same code a `float` would: at `-Os` the driver object has no undefined symbols and
+performs no allocation. It requires C++20.
+
 ## Temperature Alerts
 
 The TMP116 can assert its ALERT pin when the measured temperature crosses the high or low limit
@@ -79,8 +118,10 @@ Set the limits, then register a callback:
 
 ```cpp
 sensor.setConfig(TMP116::Config::ThermalAlertModeSelect::ALERT);
-sensor.setHighLimit(250.0f); // degrees Celsius
-sensor.setLowLimit(0.0f);
+
+using namespace mp_units;
+if (!sensor.setHighLimit(point<si::degree_Celsius>(250.0f))) reportBusFailure();
+if (!sensor.setLowLimit(point<si::degree_Celsius>(0.0f))) reportBusFailure();
 
 sensor.setAlertCallback([](TMP116::AlertType alertType) {
     if (alertType == TMP116::AlertType::High) shutdownHeatingElement();
@@ -151,3 +192,6 @@ ctest
 Run tests automatically be setting `test` as a build target in your presets.
 
 These tests will be included in the parent build if ctest is also used there.
+
+[mp-units]: https://github.com/mpusz/mp-units
+[P1935]: https://mpusz.github.io/wg21-papers/papers/1935R0_a_cpp_approach_to_physical_units.html

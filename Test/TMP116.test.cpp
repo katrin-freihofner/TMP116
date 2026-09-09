@@ -11,7 +11,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-#include "../Src/TMP116.cpp"
+#include "../Src/TMP116_Convert.hpp"
+
+#include <mp-units/systems/si.h>
+#include <mp-units/systems/usc.h>
 
 using ::testing::_;
 using ::testing::AnyNumber;
@@ -25,28 +28,61 @@ using DeviceAddress = TMP116::I2C::DeviceAddress;
 using MemoryAddress = TMP116::I2C::MemoryAddress;
 using Register		= TMP116::I2C::Register;
 using AlertType		= TMP116::AlertType;
+using Config		= TMP116::Config;
+using Temperature	= TMP116::Temperature;
+
+using TMP116_Detail::convertTemperatureRegister;
+
+using mp_units::point;
+using mp_units::si::degree_Celsius;
+using mp_units::si::kelvin;
+using mp_units::usc::degree_Fahrenheit;
+
+/** @brief The numerical value of a temperature in degrees Celsius, for comparison in tests. */
+static float inDegreesCelsius(Temperature temperature) {
+	return temperature.quantity_from_zero().numerical_value_in(degree_Celsius);
+}
 
 // Tests of Static Functions
 
-TEST(TMP116_TestStatic, convertTemperatureRegisterReturnsCorrectValuesRegisterToFloat) {
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x0000u)), 0.0f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x0001u)), 0.0078125f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x8000u)), -256.0f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x8001u)), -255.9921875f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0xFFFFu)), -0.0078125f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x7FFFu)), 255.9921875f);
-	EXPECT_FLOAT_EQ(convertTemperatureRegister(static_cast<Register>(0x7FFEu)), 255.984375f);
+TEST(TMP116_TestStatic, convertTemperatureRegisterReturnsCorrectValuesRegisterToTemperature) {
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x0000u))), 0.0f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x0001u))), 0.0078125f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x8000u))), -256.0f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x8001u))), -255.9921875f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0xFFFFu))), -0.0078125f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x7FFFu))), 255.9921875f);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(convertTemperatureRegister(static_cast<Register>(0x7FFEu))), 255.984375f);
 }
 
-TEST(TMP116_TestStatic, convertTemperatureRegisterReturnsCurrentValuesFloatToRegister) {
-	EXPECT_EQ(convertTemperatureRegister(0.0f), static_cast<Register>(0x0000u));
-	EXPECT_EQ(convertTemperatureRegister(0.0078125f), static_cast<Register>(0x0001u));
-	EXPECT_EQ(convertTemperatureRegister(-0.0078125f), static_cast<Register>(0xFFFFu));
-	EXPECT_EQ(convertTemperatureRegister(-0.015625f), static_cast<Register>(0xFFFEu));
-	EXPECT_EQ(convertTemperatureRegister(-256.0f), static_cast<Register>(0x8000u));
-	EXPECT_EQ(convertTemperatureRegister(-255.9921875f), static_cast<Register>(0x8001u));
-	EXPECT_EQ(convertTemperatureRegister(255.9921875f), static_cast<Register>(0x7FFFu));
-	EXPECT_EQ(convertTemperatureRegister(255.984375f), static_cast<Register>(0x7FFEu));
+TEST(TMP116_TestStatic, convertTemperatureRegisterReturnsCurrentValuesTemperatureToRegister) {
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(0.0f)), static_cast<Register>(0x0000u));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(0.0078125f)), static_cast<Register>(0x0001u));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(-0.0078125f)), static_cast<Register>(0xFFFFu));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(-0.015625f)), static_cast<Register>(0xFFFEu));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(-256.0f)), static_cast<Register>(0x8000u));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(-255.9921875f)), static_cast<Register>(0x8001u));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(255.9921875f)), static_cast<Register>(0x7FFFu));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(255.984375f)), static_cast<Register>(0x7FFEu));
+}
+
+TEST(TMP116_TestStatic, convertTemperatureRegisterAcceptsAnyUnitOfTemperature) {
+	// 30 degC, 86 degF and 303.15 K all name the same point on the temperature scale.
+	const Register expected = convertTemperatureRegister(point<degree_Celsius>(30.0f));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Fahrenheit>(86.0f)), expected);
+	EXPECT_EQ(convertTemperatureRegister(point<kelvin>(303.15f)), expected);
+}
+
+TEST(TMP116_TestStatic, convertTemperatureRegisterSaturatesOutOfRangeTemperatures) {
+	// The register holds a signed 16 bit count of 0.0078125 degC, so it runs out at +/-256 degC.
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(1000.0f)), static_cast<Register>(0x7FFFu));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(-1000.0f)), static_cast<Register>(0x8000u));
+}
+
+TEST(TMP116_TestStatic, convertTemperatureRegisterRoundsToTheNearestRepresentableValue) {
+	// A quarter of an LSB above 0x0001 rounds down to it, three quarters rounds up to 0x0002.
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(0.009765625f)), static_cast<Register>(0x0001u));
+	EXPECT_EQ(convertTemperatureRegister(point<degree_Celsius>(0.013671875f)), static_cast<Register>(0x0002u));
 }
 
 // Tests of Member Functions
@@ -87,12 +123,26 @@ TEST_F(TMP116_Test, getTemperatureNormallyReturnsValue) {
 		.WillOnce(Return(temperatureRegisterTestRandomValue));
 
 	const auto temperature = this->tmp116.getTemperature();
-	EXPECT_FLOAT_EQ(temperature, expectedTemperatureValue);
+	EXPECT_FLOAT_EQ(inDegreesCelsius(temperature), expectedTemperatureValue);
+}
+
+TEST_F(TMP116_Test, getTemperatureReturnsAValueReadableInAnyUnitOfTemperature) {
+	const MemoryAddress temperatureAddress				   = 0x00u;
+	const Register		temperatureRegisterTestRandomValue = 0x15D2u;
+	EXPECT_CALL(mockedI2C, read(Eq(this->tmp116.getDeviceAddress()), Eq(temperatureAddress)))
+		.WillOnce(Return(temperatureRegisterTestRandomValue));
+
+	// 43.640625 degC, converted by the library rather than by hand at the call site.
+	const auto temperature = this->tmp116.getTemperature();
+	EXPECT_FLOAT_EQ(
+		temperature.in(degree_Fahrenheit).quantity_from_zero().numerical_value_in(degree_Fahrenheit), 110.553125f
+	);
+	EXPECT_FLOAT_EQ(temperature.in(kelvin).quantity_from_zero().numerical_value_in(kelvin), 316.790625f);
 }
 
 TEST_F(TMP116_Test, getTemperatureReturnsAbsoluteZeroWhenI2CReadFails) {
 	this->disableI2C();
-	EXPECT_EQ(this->tmp116.getTemperature(), -256.0f);
+	EXPECT_EQ(this->tmp116.getTemperature(), TMP116::readFailureTemperature);
 }
 
 TEST_F(TMP116_Test, getDeviceIdNormallyReturnsValue) {
@@ -243,7 +293,7 @@ TEST_F(TMP116_Test, setConfigReturnsNulloptWhenI2CFails) {
 
 TEST_F(TMP116_Test, setHighLimitNormallyReturnsRegisterValue) {
 	const MemoryAddress highLimitAddress			  = 0x02u;
-	float				setHighLimitValue			  = -10.0f;
+	const Temperature	setHighLimitValue			  = point<degree_Celsius>(-10.0f);
 	const Register		highLimitExpectedWrittenValue = 0xFB00u;
 
 	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(highLimitAddress), _)).WillOnce(ReturnArg<2>());
@@ -254,12 +304,12 @@ TEST_F(TMP116_Test, setHighLimitNormallyReturnsRegisterValue) {
 
 TEST_F(TMP116_Test, setHighLimitReturnsNulloptWhenI2CWriteFails) {
 	this->disableI2C();
-	EXPECT_EQ(this->tmp116.setHighLimit(0.0f), nullopt);
+	EXPECT_EQ(this->tmp116.setHighLimit(point<degree_Celsius>(0.0f)), nullopt);
 }
 
 TEST_F(TMP116_Test, setLowLimitNormallyReturnsRegisterValue) {
 	const MemoryAddress lowLimitAddress				 = 0x03u;
-	float				setLowLimitValue			 = -10.0f;
+	const Temperature	setLowLimitValue			 = point<degree_Celsius>(-10.0f);
 	const Register		lowLimitExpectedWrittenValue = 0xFB00u;
 
 	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(lowLimitAddress), _)).WillOnce(ReturnArg<2>());
@@ -268,9 +318,22 @@ TEST_F(TMP116_Test, setLowLimitNormallyReturnsRegisterValue) {
 	EXPECT_EQ(lowLimitResult.value(), lowLimitExpectedWrittenValue);
 }
 
+TEST_F(TMP116_Test, setLimitsWriteTheSameRegisterForEquivalentTemperaturesInDifferentUnits) {
+	const MemoryAddress highLimitAddress = 0x02u;
+	EXPECT_CALL(mockedI2C, write(Eq(this->deviceAddress), Eq(highLimitAddress), _))
+		.Times(2)
+		.WillRepeatedly(ReturnArg<2>());
+
+	// The same threshold, named in two different units, needs no conversion at the call site.
+	const auto inCelsius	= this->tmp116.setHighLimit(point<degree_Celsius>(30.0f));
+	const auto inFahrenheit = this->tmp116.setHighLimit(point<degree_Fahrenheit>(86.0f));
+
+	EXPECT_EQ(inCelsius.value(), inFahrenheit.value());
+}
+
 TEST_F(TMP116_Test, setLowLimitReturnsNulloptWhenI2CWriteFails) {
 	this->disableI2C();
-	EXPECT_EQ(this->tmp116.setLowLimit(0.0f), nullopt);
+	EXPECT_EQ(this->tmp116.setLowLimit(point<degree_Celsius>(0.0f)), nullopt);
 }
 
 // Alert Callback Tests
