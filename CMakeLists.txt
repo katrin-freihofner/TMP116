@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25) # mp-units requires at least 3.25.
 
 project(TMP116)
 
@@ -6,11 +6,31 @@ set(LIBRARY ${PROJECT_NAME})
 
 enable_language(CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20) # mp-units v2 is built on C++20 concepts.
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+
+# Physical units for the temperature API, so that quantities carry their unit in the type system.
+# Contract checking is disabled: the default (GSL-LITE) adds a dependency and a throwing check
+# layer, neither of which suits a bare metal target.
+set(MP_UNITS_API_CONTRACTS NONE CACHE STRING "" FORCE)
+set(MP_UNITS_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+	mp-units
+	GIT_REPOSITORY https://github.com/mpusz/mp-units.git
+	GIT_TAG        v2.5.0
+	SOURCE_SUBDIR  src
+)
+FetchContent_MakeAvailable(mp-units)
 
 add_library(${LIBRARY} STATIC
 	Src/TMP116.cpp
+)
+
+# PUBLIC: the unit types appear in the public header, so consumers need them too.
+target_link_libraries(${LIBRARY} PUBLIC
+	mp-units::mp-units
 )
 
 target_include_directories(${LIBRARY} PUBLIC
@@ -22,7 +42,6 @@ add_library(${LIBRARY}::${LIBRARY} ALIAS ${LIBRARY})
 if(NOT CMAKE_CROSSCOMPILING)
 	option(TMP116_CODE_COVERAGE "Enable gcovr code coverage for TMP116" OFF)
 
-	include(FetchContent)
 	FetchContent_Declare(
 		googletest
 		GIT_REPOSITORY https://github.com/google/googletest

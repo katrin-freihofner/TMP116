@@ -11,8 +11,27 @@
 #include <cstdint>
 #include <optional>
 
+#include <mp-units/systems/si.h>
+
 class TMP116 {
 public:
+	/**
+	 * @brief An absolute temperature, carrying its unit in the type system.
+	 *
+	 * @details A quantity_point rather than a quantity, because a sensor reading and a limit are
+	 * points on the temperature scale, not differences on it. That distinction matters for any unit
+	 * whose scale is offset: 86 degF names the same point as 30 degC, whereas a 86 degF *difference*
+	 * is a 47.8 degC one. Modelling points as points keeps the library from silently confusing them.
+	 * @note Callers may pass any temperature point (degC, degF, K); the conversion to the degrees
+	 * Celsius the registers encode happens implicitly and is checked at compile time. A bare float,
+	 * a relative temperature difference, or a quantity of another dimension will not compile.
+	 * @see https://mpusz.github.io/wg21-papers/papers/1935R0_a_cpp_approach_to_physical_units.html
+	 */
+	using Temperature = mp_units::quantity_point<
+		mp_units::si::degree_Celsius,
+		mp_units::si::zeroth_degree_Celsius,
+		float>;
+
 	/**
 	 * @brief I2C Interface
 	 *
@@ -103,11 +122,22 @@ public:
 	TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress);
 
 	/**
+	 * @brief The temperature reported when the I2C read fails.
+	 *
+	 * @note -256 degC is below absolute zero, and so cannot be a physically meaningful reading.
+	 * It is however the value the temperature register encodes as 0x8000, so a caller that must
+	 * distinguish a failed bus transaction from that particular reading cannot do so here.
+	 */
+	static constexpr Temperature readFailureTemperature = mp_units::point<mp_units::si::degree_Celsius>(-256.0f);
+
+	/**
 	 * @brief Get the Temperature from the TMP116.
 	 *
-	 * @return float The temperature in degrees Celsius.
+	 * @return Temperature The measured temperature, which the caller may read in whichever unit it
+	 * wants, for example `t.in(mp_units::usc::degree_Fahrenheit)`.
+	 * @note Returns readFailureTemperature if the I2C read fails.
 	 */
-	float getTemperature() const;
+	[[nodiscard]] Temperature getTemperature() const;
 
 	/**
 	 * @brief Get the Device ID of the TMP116.
@@ -243,18 +273,20 @@ public:
 	/**
 	 * @brief Set the High Limit threshold for the TMP116.
 	 *
-	 * @param temperature The temperature limit in degrees Celsius.
+	 * @param temperature The temperature limit, in any unit of temperature.
 	 * @return std::optional<Register> The register value written to the TMP116 high limit register if successful.
+	 * @note Out of range limits saturate to the extremes the register can encode.
 	 */
-	std::optional<Register> setHighLimit(float temperature) const;
+	[[nodiscard]] std::optional<Register> setHighLimit(Temperature temperature) const;
 
 	/**
 	 * @brief Set the Low Limit threshold for the TMP116.
 	 *
-	 * @param temperature The temperature limit in degrees Celsius.
+	 * @param temperature The temperature limit, in any unit of temperature.
 	 * @return std::optional<Register> The register value written to the TMP116 low limit register if successful.
+	 * @note Out of range limits saturate to the extremes the register can encode.
 	 */
-	std::optional<Register> setLowLimit(float temperature) const;
+	[[nodiscard]] std::optional<Register> setLowLimit(Temperature temperature) const;
 
 	/**
 	 * @brief Register a callback to be invoked when the TMP116 reports a limit crossing.
