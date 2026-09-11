@@ -50,10 +50,12 @@ static constexpr Register convertTemperatureRegister(float temperature) {
 }
 
 float TMP116::getTemperature() const {
+	float temperature = -256.0f;
+
 	auto transmission = this->i2c.read(this->deviceAddress, TMP116_TEMP_REG_ADDR);
-	if (transmission) {
-		return convertTemperatureRegister(transmission.value());
-	} else return -256.0f;
+	if (transmission) temperature = convertTemperatureRegister(transmission.value());
+
+	return temperature;
 }
 
 std::optional<Register> TMP116::getDeviceId() {
@@ -61,25 +63,25 @@ std::optional<Register> TMP116::getDeviceId() {
 }
 
 std::optional<Register> TMP116::getConfigRegister() {
-	auto transmission = this->i2c.read(this->deviceAddress, TMP116_CFGR_REG_ADDR);
-	if (transmission) {
-		return transmission.value();
-	} else return std::nullopt;
+	return this->i2c.read(this->deviceAddress, TMP116_CFGR_REG_ADDR);
 }
 
 std::optional<Config> TMP116::getConfig() {
+	std::optional<Config> config = std::nullopt;
+
 	auto configTransmission = this->getConfigRegister();
-	if (configTransmission) {
-		return Config{configTransmission.value()};
-	} else return std::nullopt;
+	if (configTransmission) config = Config{configTransmission.value()};
+
+	return config;
 }
 
 std::optional<bool> TMP116::dataReady() {
+	std::optional<bool> ready = std::nullopt;
+
 	const auto transmission = this->getConfig();
+	if (transmission) ready = transmission.value().dataReadyFlag;
 
-	if (!transmission) return std::nullopt;
-
-	return transmission.value().dataReadyFlag;
+	return ready;
 }
 
 std::optional<Register> TMP116::setConfig(Config config) {
@@ -95,23 +97,25 @@ std::optional<Register> TMP116::setConfig(
 	std::optional<Config::AlertPolarity>			 alertPolarity,
 	std::optional<Config::DataReadyAlertPinSelect>	 dataReadyAlertSelection
 ) {
+	std::optional<Register> result = std::nullopt;
+
 	// Check for at least one parameter to be set.
-	if (!temperatureConversionMode.has_value() && //
-		!conversionCycleTime.has_value() &&		  //
-		!averages.has_value() &&				  //
-		!thermalAlertMode.has_value() &&		  //
-		!alertPolarity.has_value() &&			  //
-		!dataReadyAlertSelection.has_value())
-		return std::nullopt;
+	const bool anyParameterSet = temperatureConversionMode.has_value() || //
+								 conversionCycleTime.has_value() ||		  //
+								 averages.has_value() ||				  //
+								 thermalAlertMode.has_value() ||		  //
+								 alertPolarity.has_value() ||			  //
+								 dataReadyAlertSelection.has_value();
+
+	const bool allParametersSet = temperatureConversionMode.has_value() && //
+								  conversionCycleTime.has_value() &&	   //
+								  averages.has_value() &&				   //
+								  thermalAlertMode.has_value() &&		   //
+								  alertPolarity.has_value() &&			   //
+								  dataReadyAlertSelection.has_value();
 
 	// If all parameters are set, immediately write to the TMP116.
-	if (temperatureConversionMode.has_value() && //
-		conversionCycleTime.has_value() &&		 //
-		averages.has_value() &&					 //
-		thermalAlertMode.has_value() &&			 //
-		alertPolarity.has_value() &&			 //
-		dataReadyAlertSelection.has_value()		 //
-	) {
+	if (allParametersSet) {
 		Config config{
 			temperatureConversionMode.value(),
 			conversionCycleTime.value(),
@@ -119,24 +123,26 @@ std::optional<Register> TMP116::setConfig(
 			thermalAlertMode.value(),
 			alertPolarity.value(),
 			dataReadyAlertSelection.value()};
-		return this->setConfig(config);
-	} else {
+		result = this->setConfig(config);
+	} else if (anyParameterSet) {
 		auto transmission = this->getConfig();
 
-		if (!transmission) return std::nullopt;
+		if (transmission) {
+			Config config = transmission.value();
 
-		Config config = transmission.value();
+			if (temperatureConversionMode.has_value()) config.temperatureConversionMode = temperatureConversionMode.value();
+			if (conversionCycleTime.has_value()) config.conversionCycleTime = conversionCycleTime.value();
+			if (averages.has_value()) config.averages = averages.value();
+			if (thermalAlertMode.has_value()) config.thermalAlertMode = thermalAlertMode.value();
+			if (alertPolarity.has_value()) config.alertPolarity = alertPolarity.value();
+			if (dataReadyAlertSelection.has_value()) config.dataReadyAlertSelection = dataReadyAlertSelection.value();
 
-		if (temperatureConversionMode.has_value()) config.temperatureConversionMode = temperatureConversionMode.value();
-		if (conversionCycleTime.has_value()) config.conversionCycleTime = conversionCycleTime.value();
-		if (averages.has_value()) config.averages = averages.value();
-		if (thermalAlertMode.has_value()) config.thermalAlertMode = thermalAlertMode.value();
-		if (alertPolarity.has_value()) config.alertPolarity = alertPolarity.value();
-		if (dataReadyAlertSelection.has_value()) config.dataReadyAlertSelection = dataReadyAlertSelection.value();
-
-		if (config == Register(Config{transmission.value()})) return config; // Short circuit if no change.
-		else return this->setConfig(config);
+			if (config == Register(Config{transmission.value()})) result = Register(config); // Short circuit if no change.
+			else result = this->setConfig(config);
+		}
 	}
+
+	return result;
 }
 
 std::optional<Register> TMP116::setHighLimit(float temperature) const {
