@@ -42,6 +42,27 @@ The design philosophy of this driver is comparatively unique in the embedded sys
     TMP116::TMP116 sensor(&i2cInterface);
     ```
 
+## Temperature Units
+
+Temperatures are passed as [Au](https://aurora-opensource.github.io/au/) quantity points rather than bare `float` values, so the compiler tracks the unit and a Fahrenheit value can never be mistaken for Celsius. `TMP116::Temperature` is `au::QuantityPoint<au::Celsius, float>`; any Au temperature point converts to it automatically, including the offset between scales.
+
+```cpp
+#include "au/units/fahrenheit.hh"
+
+sensor.setHighLimit(au::celsius_pt(80.0f));
+sensor.setHighLimit(au::fahrenheit_pt(176.0f)); // Same threshold, same register value.
+
+if (auto limit = sensor.getHighLimit()) {
+    float limitInFahrenheit = limit->in(au::fahrenheit_pt);
+}
+
+if (auto temperature = sensor.getTemperature()) { // std::nullopt if the I2C read fails.
+    float celsius = temperature->in(au::celsius_pt);
+}
+```
+
+Passing a bare `float` to a setter is a compile error. The driver requires C++17. CMake fetches Au automatically with `FetchContent`, or uses an installed Au package (`find_package(Au)`) when one is available.
+
 ## Design Patterns
 
 This driver follows an [Strategy Design Pattern](https://en.wikipedia.org/wiki/Strategy_pattern) with regards to the I2C communication. The driver defines an I2C interface (`TMP116::I2C`). The user must then provide a concrete implementation of this interface, and provide it to the driver class.
@@ -67,7 +88,11 @@ public:
 // Definitions made in a separate source file.
 ```
 
-Refer to [Examples] for concrete examples of this design pattern.
+Refer to [Examples/ReadTemperature.cpp](Examples/ReadTemperature.cpp) for a complete, runnable example of this design pattern. It implements `TMP116::I2C` against a simulated sensor, polls `dataReady()`, reads each conversion with `getTemperature()` in Celsius and Fahrenheit, and shows the `std::nullopt` result of a failed I2C read. It is built and run by CTest when TMP116 is the top-level project (toggle with the CMake option `TMP116_BUILD_EXAMPLES`), or run it directly:
+
+```zsh
+./build/TMP116_Example_ReadTemperature
+```
 
 ## Testing
 

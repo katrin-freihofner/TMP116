@@ -8,6 +8,8 @@
 
 #include "TMP116.hpp"
 
+#include <cmath>
+
 using DeviceAddress = TMP116::I2C::DeviceAddress;
 using MemoryAddress = TMP116::I2C::MemoryAddress;
 using Register		= TMP116::I2C::Register;
@@ -24,36 +26,46 @@ using Config		= TMP116::Config;
 #define TMP116_EEPROM4_REG_ADDR	  static_cast<MemoryAddress>(0x08u) // EEPROM 4 Register Address
 #define TMP116_DEVICE_ID_REG_ADDR static_cast<MemoryAddress>(0x0Fu) // Device ID Register Address
 
-#define TMP116_LSB_TEMPERATURE_RESOLUTION 0.0078125f // 0.0078125 milli-degrees Celsius per LSB
+#define TMP116_LSB_TEMPERATURE_RESOLUTION 0.0078125f // 0.0078125 degrees Celsius per LSB
 
 TMP116::TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress) : i2c{i2c}, deviceAddress{deviceAddress} {}
 
+namespace {
 /**
- * @brief Convert a TMP116 Register temperature value to a float.
+ * @brief Convert a TMP116 temperature register value to a Temperature.
  *
- * @param registerValue The TMP116 register value.
- * @return float The equivalent temperature in degrees Celsius.
+ * @param registerValue The TMP116 register value (two's complement, 0.0078125 degrees Celsius per LSB).
+ * @return TMP116::Temperature The equivalent temperature.
  */
-static constexpr float convertTemperatureRegister(Register registerValue) {
-	return static_cast<float>(static_cast<int16_t>(registerValue)) * TMP116_LSB_TEMPERATURE_RESOLUTION;
+constexpr TMP116::Temperature decodeTemperatureRegister(Register registerValue) {
+	return au::celsius_pt(static_cast<float>(static_cast<int16_t>(registerValue)) * TMP116_LSB_TEMPERATURE_RESOLUTION);
 }
 
 /**
- * @brief Convert a float temperature in degrees Celsius to a TMP116 Register value.
+ * @brief Convert a Temperature to a TMP116 temperature register value.
  *
- * @param temperature The temperature in degrees Celsius.
- * @return Register The TMP116 register equivalent value.
+ * @param temperature The temperature.
+ * @return Register The TMP116 register value, rounded to the nearest LSB and clamped to the register range.
+ * @note NaN is encoded as 0 degrees Celsius.
  */
-static constexpr Register convertTemperatureRegister(float temperature) {
-	Register result = static_cast<Register>(static_cast<int16_t>(temperature / TMP116_LSB_TEMPERATURE_RESOLUTION));
-	return result;
-}
+Register encodeTemperatureRegister(TMP116::Temperature temperature) {
+	const float lsbCount = std::round(temperature.in(au::celsius_pt) / TMP116_LSB_TEMPERATURE_RESOLUTION);
+	if (std::isnan(lsbCount)) return 0x0000u;
 
-float TMP116::getTemperature() const {
-	auto transmission = this->i2c.read(this->deviceAddress, TMP116_TEMP_REG_ADDR);
+	const float clampedLsbCount = std::fmax(static_cast<float>(INT16_MIN), std::fmin(lsbCount, static_cast<float>(INT16_MAX)));
+	return static_cast<Register>(static_cast<int16_t>(clampedLsbCount));
+}
+} // namespace
+
+std::optional<TMP116::Temperature> TMP116::readTemperatureRegister(MemoryAddress memoryAddress) const {
+	auto transmission = this->i2c.read(this->deviceAddress, memoryAddress);
 	if (transmission) {
-		return convertTemperatureRegister(transmission.value());
-	} else return -256.0f;
+		return decodeTemperatureRegister(transmission.value());
+	} else return std::nullopt;
+}
+
+std::optional<TMP116::Temperature> TMP116::getTemperature() const {
+	return this->readTemperatureRegister(TMP116_TEMP_REG_ADDR);
 }
 
 std::optional<Register> TMP116::getDeviceId() {
@@ -139,14 +151,22 @@ std::optional<Register> TMP116::setConfig(
 	}
 }
 
-std::optional<Register> TMP116::setHighLimit(float temperature) const {
-	Register registerValue = convertTemperatureRegister(temperature);
+std::optional<Register> TMP116::setHighLimit(Temperature temperature) const {
+	Register registerValue = encodeTemperatureRegister(temperature);
 	return this->i2c.write(this->deviceAddress, TMP116_HIGH_LIM_REG_ADDR, registerValue);
 }
 
-std::optional<Register> TMP116::setLowLimit(float temperature) const {
-	Register registerValue = convertTemperatureRegister(temperature);
+std::optional<Register> TMP116::setLowLimit(Temperature temperature) const {
+	Register registerValue = encodeTemperatureRegister(temperature);
 	return this->i2c.write(this->deviceAddress, TMP116_LOW_LIM_REG_ADDR, registerValue);
+}
+
+std::optional<TMP116::Temperature> TMP116::getHighLimit() const {
+	return this->readTemperatureRegister(TMP116_HIGH_LIM_REG_ADDR);
+}
+
+std::optional<TMP116::Temperature> TMP116::getLowLimit() const {
+	return this->readTemperatureRegister(TMP116_LOW_LIM_REG_ADDR);
 }
 
 TMP116::Config::Config(Register configRegister)

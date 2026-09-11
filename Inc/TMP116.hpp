@@ -11,6 +11,9 @@
 #include <cstdint>
 #include <optional>
 
+#include "au/au.hh"
+#include "au/units/celsius.hh"
+
 class TMP116 {
 public:
 	/**
@@ -56,9 +59,26 @@ public:
 	using MemoryAddress = I2C::MemoryAddress;
 	using Register		= I2C::Register;
 
+	/**
+	 * @brief An absolute temperature, as an Au quantity point in degrees Celsius.
+	 *
+	 * @details Any Au temperature point (e.g. au::fahrenheit_pt, au::kelvins_pt) converts implicitly, including the
+	 * offset between scales, so callers never convert units by hand. Read a value out in the unit of your choice with
+	 * e.g. temperature.in(au::fahrenheit_pt).
+	 */
+	using Temperature = au::QuantityPoint<au::Celsius, float>;
+
 private:
 	I2C			 &i2c;
 	DeviceAddress deviceAddress;
+
+	/**
+	 * @brief Read and decode a temperature-encoded register (temperature, high limit or low limit).
+	 *
+	 * @param memoryAddress The register to read.
+	 * @return std::optional<Temperature> The decoded temperature if successful.
+	 */
+	std::optional<Temperature> readTemperatureRegister(MemoryAddress memoryAddress) const;
 
 public:
 	/**
@@ -72,9 +92,9 @@ public:
 	/**
 	 * @brief Get the Temperature from the TMP116.
 	 *
-	 * @return float The temperature in degrees Celsius.
+	 * @return std::optional<Temperature> The measured temperature if successful.
 	 */
-	float getTemperature() const;
+	std::optional<Temperature> getTemperature() const;
 
 	/**
 	 * @brief Get the Device ID of the TMP116.
@@ -210,18 +230,36 @@ public:
 	/**
 	 * @brief Set the High Limit threshold for the TMP116.
 	 *
-	 * @param temperature The temperature limit in degrees Celsius.
+	 * @param temperature The temperature limit, in any Au temperature unit (e.g. au::fahrenheit_pt(176.0f)).
 	 * @return std::optional<Register> The register value written to the TMP116 high limit register if successful.
+	 * @note The limit is rounded to the nearest 0.0078125 degrees Celsius and clamped to the register range of
+	 * 		 [-256, 255.9921875] degrees Celsius. NaN is written as 0 degrees Celsius.
 	 */
-	std::optional<Register> setHighLimit(float temperature) const;
+	std::optional<Register> setHighLimit(Temperature temperature) const;
 
 	/**
 	 * @brief Set the Low Limit threshold for the TMP116.
 	 *
-	 * @param temperature The temperature limit in degrees Celsius.
+	 * @param temperature The temperature limit, in any Au temperature unit (e.g. au::fahrenheit_pt(32.0f)).
 	 * @return std::optional<Register> The register value written to the TMP116 low limit register if successful.
+	 * @note The limit is rounded to the nearest 0.0078125 degrees Celsius and clamped to the register range of
+	 * 		 [-256, 255.9921875] degrees Celsius. NaN is written as 0 degrees Celsius.
 	 */
-	std::optional<Register> setLowLimit(float temperature) const;
+	std::optional<Register> setLowLimit(Temperature temperature) const;
+
+	/**
+	 * @brief Get the High Limit threshold of the TMP116.
+	 *
+	 * @return std::optional<Temperature> The high limit if successful.
+	 */
+	std::optional<Temperature> getHighLimit() const;
+
+	/**
+	 * @brief Get the Low Limit threshold of the TMP116.
+	 *
+	 * @return std::optional<Temperature> The low limit if successful.
+	 */
+	std::optional<Temperature> getLowLimit() const;
 
 public:
 	inline DeviceAddress getDeviceAddress() const { return deviceAddress; }
