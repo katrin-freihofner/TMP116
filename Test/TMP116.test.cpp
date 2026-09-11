@@ -78,22 +78,6 @@ public:
 	}
 };
 
-TEST_F(TMP116_Test, getTemperatureNormallyReturnsValue) {
-	const MemoryAddress temperatureAddress				   = 0x00u;
-	const Register		temperatureRegisterTestRandomValue = 0x15D2u;
-	const float			expectedTemperatureValue		   = 43.640625f;
-	EXPECT_CALL(mockedI2C, read(Eq(this->tmp116.getDeviceAddress()), Eq(temperatureAddress)))
-		.WillOnce(Return(temperatureRegisterTestRandomValue));
-
-	const auto temperature = this->tmp116.getTemperature();
-	EXPECT_FLOAT_EQ(temperature, expectedTemperatureValue);
-}
-
-TEST_F(TMP116_Test, getTemperatureReturnsAbsoluteZeroWhenI2CReadFails) {
-	this->disableI2C();
-	EXPECT_EQ(this->tmp116.getTemperature(), -256.0f);
-}
-
 TEST_F(TMP116_Test, getDeviceIdNormallyReturnsValue) {
 	const MemoryAddress deviceIdAddress		 = 0x0Fu;
 	const Register		deviceIdDefaultValue = 0x0118u;

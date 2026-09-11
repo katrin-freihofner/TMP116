@@ -70,13 +70,6 @@ public:
 	TMP116(I2C &i2c, I2C::DeviceAddress deviceAddress);
 
 	/**
-	 * @brief Get the Temperature from the TMP116.
-	 *
-	 * @return float The temperature in degrees Celsius.
-	 */
-	float getTemperature() const;
-
-	/**
 	 * @brief Get the Device ID of the TMP116.
 	 *
 	 * @return std::optional<Register> The Device ID if successful.

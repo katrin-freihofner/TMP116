@@ -49,15 +49,6 @@ static constexpr Register convertTemperatureRegister(float temperature) {
 	return result;
 }
 
-float TMP116::getTemperature() const {
-	float temperature = -256.0f;
-
-	auto transmission = this->i2c.read(this->deviceAddress, TMP116_TEMP_REG_ADDR);
-	if (transmission) temperature = convertTemperatureRegister(transmission.value());
-
-	return temperature;
-}
-
 std::optional<Register> TMP116::getDeviceId() {
 	return this->i2c.read(this->deviceAddress, TMP116_DEVICE_ID_REG_ADDR);
 }
